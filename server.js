@@ -1,77 +1,77 @@
-const express = require("express");
-const cors = require("cors");
-const { exec } = require("child_process");
-const path = require("path");
-const fs = require("fs");
+const express = require('express');
+const cors = require('cors');
+const { exec } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
-
 const PORT = process.env.PORT || 3000;
 
-const YT_DLP_PATH = "yt-dlp";
-const FFMPEG_PATH = "ffmpeg";
+app.use(cors());
 
-app.get("/ping", (req, res) => {
-  res.send("pong");
+app.get('/ping', (req, res) => {
+  res.json({ status: "ok" });
 });
 
-app.get("/download", (req, res) => {
+app.get('/download', (req, res) => {
   const videoId = req.query.videoId;
-  const format = req.query.format || "mp4";
+  const playlistId = req.query.playlistId;
+  const format = req.query.format || 'mp4';
   const subs = req.query.subs;
   const quality = req.query.quality;
 
-  if (!videoId) return res.json({ error: "Missing videoId" });
-
-  const outputTemplate = `%(title)s.%(ext)s`;
-
-  let command = `${YT_DLP_PATH} -f bestaudio`;
-  if (format === "mp3") {
-    command = `${YT_DLP_PATH} -x --audio-format mp3 --embed-thumbnail --add-metadata`;
-  } else if (format === "mp4") {
-    command = `${YT_DLP_PATH} -f bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4`;
-  } else {
-    command = `${YT_DLP_PATH} -f bestvideo+bestaudio --merge-output-format ${format}`;
+  if (!videoId && !playlistId) {
+    return res.status(400).json({ error: 'Missing videoId or playlistId' });
   }
 
-  if (subs) {
-    command += ` --write-subs --sub-lang ${subs} --convert-subs srt`;
+  let url;
+  if (videoId) {
+    url = `https://www.youtube.com/watch?v=${videoId}`;
+  } else {
+    url = `https://www.youtube.com/playlist?list=${playlistId}`;
+  }
+
+  const outName = `download.${format}`;
+  let cmd = `yt-dlp -o "${outName}"`;
+
+  if (format === 'mp3') {
+    cmd += ' -x --audio-format mp3 --audio-quality 0 --embed-thumbnail --add-metadata';
+  } else if (subs) {
+    cmd += ` --write-sub --sub-lang ${subs} --convert-subs srt`;
   }
 
   if (quality) {
-    command += ` -S "height:${quality}"`;
+    cmd += ` -f "bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]"`;
+  } else {
+    cmd += ' -f best';
   }
 
-  command += ` --ffmpeg-location ${FFMPEG_PATH} -o "${outputTemplate}" "https://www.youtube.com/watch?v=${videoId}"`;
+  cmd += ` "${url}"`;
 
-  console.log("Running command:", command);
+  console.log(`Running: ${cmd}`);
 
-  exec(command, (error, stdout, stderr) => {
+  exec(cmd, { cwd: path.resolve(__dirname) }, (error, stdout, stderr) => {
     console.log(stdout);
-    console.error(stderr);
-
+    console.log(stderr);
     if (error) {
       console.error(error);
-      return res.json({ error: "Download failed" });
+      return res.status(500).json({ error: error.message });
     }
 
-    // חפש את הקובץ שהורד
-    fs.readdir(".", (err, files) => {
-      if (err) return res.json({ error: "Cannot list files" });
+    const filePath = path.join(__dirname, outName);
 
-      const file = files.find(f => f.endsWith(`.${format}`) || f.endsWith(".mp3"));
-      if (!file) return res.json({ error: "File not found" });
-
-      const filePath = path.resolve(file);
-      res.json({ url: `${req.protocol}://${req.get("host")}/files/${encodeURIComponent(file)}` });
-    });
+    if (fs.existsSync(filePath)) {
+      res.download(filePath, (err) => {
+        if (err) {
+          console.error(err);
+        }
+        fs.unlinkSync(filePath);
+      });
+    } else {
+      res.status(500).json({ error: "Download failed" });
+    }
   });
 });
-
-// שרת קבצים להורדה
-app.use("/files", express.static("."));
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
