@@ -1,11 +1,10 @@
-FROM node:18
+# Image בסיסי
+FROM node:20
 
-# התקן yt-dlp
-RUN apt-get update \
- && apt-get install -y ffmpeg wget \
- && wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
- && chmod a+rx yt-dlp \
- && mv yt-dlp /usr/local/bin/yt-dlp
+# מתקין ffmpeg ו yt-dlp
+RUN apt update && \
+    apt install -y ffmpeg python3-pip && \
+    pip install yt-dlp
 
 WORKDIR /app
 
@@ -16,4 +15,4 @@ COPY . .
 
 EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["node", "server.js"]
