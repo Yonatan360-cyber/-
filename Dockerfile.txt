@@ -10,10 +10,13 @@ RUN apt-get update && \
 # יוצרים תיקיית עבודה
 WORKDIR /app
 
-# מעתיקים את הקוד שלך לתוך הקונטיינר
+# מעתיקים package.json
 COPY package*.json ./
+
+# מתקינים תלויות
 RUN npm install
 
+# מעתיקים את כל שאר הקבצים
 COPY . .
 
 # פותחים פורט 3000
