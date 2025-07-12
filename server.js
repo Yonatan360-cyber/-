@@ -1,114 +1,77 @@
-const express = require('express');
-const cors = require('cors');
-const { exec } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+const express = require("express");
+const cors = require("cors");
+const { exec } = require("child_process");
+const path = require("path");
+const fs = require("fs");
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.static('downloads'));
+const YT_DLP_PATH = "yt-dlp";
+const FFMPEG_PATH = "ffmpeg";
 
-app.get('/download', async (req, res) => {
-  const videoId = req.query.videoId;
-  const playlistId = req.query.playlistId;
-  const format = req.query.format || 'mp4';
-  const subs = req.query.subs || null;
-  const quality = req.query.quality || null;
-
-  let url = '';
-
-  if (playlistId) {
-    url = `https://www.youtube.com/playlist?list=${playlistId}`;
-  } else if (videoId) {
-    url = `https://www.youtube.com/watch?v=${videoId}`;
-  } else {
-    return res.json({ error: 'Missing videoId or playlistId' });
-  }
-
-  try {
-    const fileName = await downloadYoutube(url, format, subs, quality, playlistId);
-    if (!fileName) {
-      return res.json({ error: 'Download failed' });
-    }
-    res.json({
-      url: `${req.protocol}://${req.get('host')}/${encodeURIComponent(fileName)}`
-    });
-  } catch (e) {
-    console.error(e);
-    res.json({ error: 'Download failed' });
-  }
+app.get("/ping", (req, res) => {
+  res.send("pong");
 });
 
-async function downloadYoutube(url, format, subs, quality, playlistId) {
-  return new Promise((resolve, reject) => {
-    const downloadDir = path.join(__dirname, 'downloads');
-    if (!fs.existsSync(downloadDir)) {
-      fs.mkdirSync(downloadDir);
+app.get("/download", (req, res) => {
+  const videoId = req.query.videoId;
+  const format = req.query.format || "mp4";
+  const subs = req.query.subs;
+  const quality = req.query.quality;
+
+  if (!videoId) return res.json({ error: "Missing videoId" });
+
+  const outputTemplate = `%(title)s.%(ext)s`;
+
+  let command = `${YT_DLP_PATH} -f bestaudio`;
+  if (format === "mp3") {
+    command = `${YT_DLP_PATH} -x --audio-format mp3 --embed-thumbnail --add-metadata`;
+  } else if (format === "mp4") {
+    command = `${YT_DLP_PATH} -f bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4`;
+  } else {
+    command = `${YT_DLP_PATH} -f bestvideo+bestaudio --merge-output-format ${format}`;
+  }
+
+  if (subs) {
+    command += ` --write-subs --sub-lang ${subs} --convert-subs srt`;
+  }
+
+  if (quality) {
+    command += ` -S "height:${quality}"`;
+  }
+
+  command += ` --ffmpeg-location ${FFMPEG_PATH} -o "${outputTemplate}" "https://www.youtube.com/watch?v=${videoId}"`;
+
+  console.log("Running command:", command);
+
+  exec(command, (error, stdout, stderr) => {
+    console.log(stdout);
+    console.error(stderr);
+
+    if (error) {
+      console.error(error);
+      return res.json({ error: "Download failed" });
     }
 
-    let output = path.join('downloads', '%(title)s.%(ext)s');
-    let cmd = `yt-dlp -o "${output}"`;
+    // חפש את הקובץ שהורד
+    fs.readdir(".", (err, files) => {
+      if (err) return res.json({ error: "Cannot list files" });
 
-    if (subs) {
-      cmd += ` --write-subs --write-auto-sub --sub-lang ${subs} --convert-subs srt`;
-    }
+      const file = files.find(f => f.endsWith(`.${format}`) || f.endsWith(".mp3"));
+      if (!file) return res.json({ error: "File not found" });
 
-    if (format === 'mp3') {
-      cmd += ' -x --audio-format mp3 --audio-quality 0';
-    } else if (format === 'mp4') {
-      if (quality) {
-        // לדוגמה: bestvideo[height<=720]+bestaudio
-        cmd += ` -f "bestvideo[ext=mp4][height<=${quality}]+bestaudio[ext=m4a]/mp4"`;
-      } else {
-        cmd += ' -f bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4';
-      }
-    } else {
-      cmd += ` -f bestvideo+bestaudio --merge-output-format ${format}`;
-    }
-
-    cmd += ` "${url}"`;
-
-    console.log("========== yt-dlp COMMAND ==========");
-    console.log(cmd);
-    console.log("====================================");
-
-    exec(cmd, { maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
-      console.log("STDOUT:", stdout);
-      console.log("STDERR:", stderr);
-
-      if (error) {
-        console.error(error);
-        return reject(error);
-      }
-
-      const match = stdout.match(/Destination:\s*(.+)/);
-      if (match && match[1]) {
-        const filePath = match[1].trim();
-        const fileName = path.basename(filePath);
-        resolve(fileName);
-      } else {
-        resolve(null);
-      }
+      const filePath = path.resolve(file);
+      res.json({ url: `${req.protocol}://${req.get("host")}/files/${encodeURIComponent(file)}` });
     });
   });
-}
+});
 
-// מחיקה אוטומטית של קבצים ישנים
-setInterval(() => {
-  const dir = path.join(__dirname, 'downloads');
-  if (fs.existsSync(dir)) {
-    fs.readdirSync(dir).forEach(file => {
-      const fullPath = path.join(dir, file);
-      const stat = fs.statSync(fullPath);
-      if (Date.now() - stat.mtimeMs > 1000 * 60 * 60) {
-        fs.unlinkSync(fullPath);
-        console.log("🗑️ Deleted file:", fullPath);
-      }
-    });
-  }
-}, 60 * 60 * 1000);
+// שרת קבצים להורדה
+app.use("/files", express.static("."));
 
 app.listen(PORT, () => {
   console.log(`✅ Server running at http://localhost:${PORT}`);
