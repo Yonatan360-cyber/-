@@ -1,18 +1,23 @@
-# Image בסיסי
-FROM node:20
+# בסיס דביאן עם Node
+FROM node:20-bullseye
 
-# מתקין ffmpeg ו yt-dlp
-RUN apt update && \
-    apt install -y ffmpeg python3-pip && \
-    pip install yt-dlp
+# מתקינים yt-dlp ו-ffmpeg
+RUN apt-get update && \
+    apt-get install -y wget ffmpeg && \
+    wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
 
+# יוצרים תיקיית עבודה
 WORKDIR /app
 
+# מעתיקים את הקוד שלך לתוך הקונטיינר
 COPY package*.json ./
 RUN npm install
 
 COPY . .
 
+# פותחים פורט 3000
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# מריצים את השרת שלך
+CMD ["npm", "start"]
