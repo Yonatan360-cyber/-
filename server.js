@@ -1,78 +1,60 @@
-const express = require('express');
-const cors = require('cors');
-const { exec } = require('child_process');
-const path = require('path');
-const fs = require('fs');
+import express from "express";
+import { exec } from "child_process";
+import cors from "cors";
+import path from "path";
+import fs from "fs";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors());
+const PORT = process.env.PORT || 10000;
 
-app.get('/ping', (req, res) => {
+// נתיב בדיקה בסיסי
+app.get("/", (req, res) => {
+  res.send("✅ YouTube Downloader Server is running!");
+});
+
+// בדיקת תקינות
+app.get("/ping", (req, res) => {
   res.json({ status: "ok" });
 });
 
-app.get('/download', (req, res) => {
-  const videoId = req.query.videoId;
-  const playlistId = req.query.playlistId;
-  const format = req.query.format || 'mp4';
-  const subs = req.query.subs;
-  const quality = req.query.quality;
-
+// הורדה
+app.get("/download", (req, res) => {
+  const { videoId, playlistId, format = "mp4", subs, quality } = req.query;
   if (!videoId && !playlistId) {
-    return res.status(400).json({ error: 'Missing videoId or playlistId' });
+    return res.status(400).json({ error: "Missing videoId or playlistId" });
   }
 
-  let url;
-  if (videoId) {
-    url = `https://www.youtube.com/watch?v=${videoId}`;
-  } else {
-    url = `https://www.youtube.com/playlist?list=${playlistId}`;
-  }
+  const target = videoId
+    ? `https://www.youtube.com/watch?v=${videoId}`
+    : `https://www.youtube.com/playlist?list=${playlistId}`;
 
-  const outName = `download.${format}`;
-  let cmd = `yt-dlp -o "${outName}"`;
+  const output = `/tmp/video.${format}`;
+  let cmd = `yt-dlp -o "${output}" -f "best" "${target}"`;
 
-  if (format === 'mp3') {
-    cmd += ' -x --audio-format mp3 --audio-quality 0 --embed-thumbnail --add-metadata';
-  } else if (subs) {
-    cmd += ` --write-sub --sub-lang ${subs} --convert-subs srt`;
-  }
+  if (subs) cmd += ` --write-auto-sub --sub-lang ${subs} --convert-subs srt`;
+  if (quality) cmd += ` -f "bestvideo[height<=${quality}]+bestaudio/best"`;
 
-  if (quality) {
-    cmd += ` -f "bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]"`;
-  } else {
-    cmd += ' -f best';
-  }
-
-  cmd += ` "${url}"`;
-
-  console.log(`Running: ${cmd}`);
-
-  exec(cmd, { cwd: path.resolve(__dirname) }, (error, stdout, stderr) => {
-    console.log(stdout);
-    console.log(stderr);
+  exec(cmd, (error) => {
     if (error) {
-      console.error(error);
+      console.error("❌ yt-dlp error:", error);
       return res.status(500).json({ error: error.message });
     }
 
-    const filePath = path.join(__dirname, outName);
-
-    if (fs.existsSync(filePath)) {
-      res.download(filePath, (err) => {
-        if (err) {
-          console.error(err);
-        }
-        fs.unlinkSync(filePath);
-      });
-    } else {
-      res.status(500).json({ error: "Download failed" });
-    }
+    const fileUrl = `${req.protocol}://${req.get("host")}/file/${path.basename(output)}`;
+    res.json({ url: fileUrl });
   });
 });
 
+// שליחה של קובץ להורדה
+app.get("/file/:filename", (req, res) => {
+  const file = `/tmp/${req.params.filename}`;
+  if (!fs.existsSync(file)) {
+    return res.status(404).send("File not found");
+  }
+  res.download(file);
+});
+
 app.listen(PORT, () => {
-  console.log(`✅ Server running at http://localhost:${PORT}`);
+  console.log(`✅ Server running on port ${PORT}`);
 });
